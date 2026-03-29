@@ -1,0 +1,45 @@
+# Secrets — never commit credentials
+.env
+.env.*
+!.env.example
+
+# Local tooling
+.claude/
+
+# Runtime / state dirs any bot might create
+state/
+**/state/
+*.state
+*.lock
+
+# Logs
+*.log
+logs/
+**/logs/
+
+# Temp / scratch files
+*.tmp
+*.bak
+*.swp
+*~
+
+# Editor
+.vscode/
+.idea/
+*.iml
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Python (if future bots use it)
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
+
+# Node (if future bots use it)
+node_modules/
+npm-debug.log*
+yarn-error.log*
