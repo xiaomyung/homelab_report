@@ -7,31 +7,34 @@ timer; no persistent process, no framework — just shell and curl.
 ## What it reports
 
 ```
-🏠 Homelab Report — 2026-03-29 12:00
+🏠 Homelab Report — 2026-04-02 12:00
 
 🛡 Security
-  AIDE:        No changes detected
-  ClamAV:      Clean  (scan 2026-03-28)
-  rkhunter:    0 warnings
-  Auth:        3 sudo events, 0 su events (last 24h)
-  Fail2ban:    2 IPs banned (last 24h)
+  AIDE:      2026-04-02 01:52 · 0 added · 0 changed · 0 removed
+  ClamAV:    2026-03-29 · 160567 files · 0 infected
+  rkhunter:  2026-04-02 · all clear
+  SSH auth:  last 24h · 0 failure(s)
+  fail2ban:  2 jail(s) · 0 banned
 
 💾 Disk  [checked 12:00]
-  /:           18G / 117G (16%)
-  /mnt/storage: 2.8T / 3.6T (79%)
+  /:             29% used (of 233G)
+  /mnt/storage:  16% used (of 916G)
+  /mnt/cloud:    28% used (of 7.3T)
 
 🖥 System  [checked 12:00]
-  Uptime:      14 days
-  Updates:     2 security updates pending
-  Memory:      3.1G / 7.8G (40%)
-  SMART:       sda OK  sdb OK  nvme0n1 OK
-  Docker:      8 running, 0 stopped
-  Logins:      3 in last 24h
-               apollo from 192.168.0.138 at 03-29, last 09:14, (3)
+  Uptime:    1 week, 1 day, 7 hours, 47 minutes
+  Reboot:    not required
+  Memory:    RAM 8.4Gi/62Gi
+  Drives:    sda OK · sdb OK · nvme0n1 OK
+  Docker:    25/26 up
+             stopped: minecraft/wings
+  Logins:    10 in last 24h
+             apollo from 192.168.0.138 at 04-02, last 18:14, (5)
+             apollo from 192.168.0.138 at 04-01, last 21:13, (3)
 
 🗄 Backups
-  server-backup:       OK  2026-03-29 04:00  (14G)
-  recovery-snapshot:   OK  2026-03-29 04:31
+  Backup:    2026-04-02 04:01 · ✓ 5.5G · local+cloud · 68s
+  Recovery:  2026-04-02 04:35 · ✓ snapshot saved
 ```
 
 ## Requirements
@@ -49,7 +52,7 @@ Optional (checks are skipped if not installed):
 **1. Clone and enter the directory**
 
 ```bash
-git clone https://github.com/YOUR_USERNAME/tg.git /srv/services/tg
+git clone https://github.com/xiaomyung/tg.git /srv/services/tg
 cd /srv/services/tg/homelab_report
 ```
 
@@ -121,16 +124,16 @@ sudo systemctl list-timers | grep tg-
 | `aide.sh` | `/var/log/aide/aide-YYYY-MM-DD.log` | File integrity changes |
 | `clamav.sh` | `/var/log/clamav/weekly-scan.log` | Antivirus scan result |
 | `rkhunter.sh` | `/var/log/rkhunter.log` | Rootkit scan warnings |
-| `auth.sh` | `/var/log/auth.log` | sudo/su events in last 24h |
-| `fail2ban.sh` | `fail2ban-client` | Banned IPs in last 24h |
+| `auth.sh` | `/var/log/auth.log` | SSH auth failures in last 24h |
+| `fail2ban.sh` | `fail2ban-client` | Jail count and currently banned IPs |
 | `disk.sh` | `df -h` | Usage for /, /mnt/storage, /mnt/cloud |
-| `system.sh` | `uptime`, `apt`, `/var/run/reboot-required` | Uptime, pending updates, reboot flag |
-| `memory.sh` | `/proc/meminfo` | RAM usage |
+| `system.sh` | `uptime`, `apt`, `/var/run/reboot-required` | Uptime, reboot flag, security updates |
+| `memory.sh` | `free -h` | RAM and swap usage |
 | `smart.sh` | `smartctl -H` | Drive health for sda, sdb, nvme0n1 |
-| `docker.sh` | `docker ps -a` | Running and stopped container counts |
+| `docker.sh` | `docker ps -a` | Up/total count, stopped and crashed containers by name |
 | `logins.sh` | `last` | Successful logins in last 24h, grouped by user+IP+date with count |
 | `systemd.sh` | `systemctl --failed` | Failed systemd units (omitted if none) |
-| `backup.sh` | `/var/log/server-backup-cron.log` | Backup job results |
+| `backup.sh` | `/var/log/server-backup-cron.log`, `/var/log/recovery-snapshot.log` | Backup and recovery snapshot results |
 
 Each check script is independent — a failure in one never blocks the others or
 prevents the report from sending.
