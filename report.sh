@@ -112,7 +112,7 @@ send_aide_attachment() {
   [[ -z "$meaningful" ]] && return 0
 
   local tmpfile
-  tmpfile=$(mktemp /tmp/aide-diff-XXXXXX.log)
+  tmpfile=$(mktemp /tmp/aide-diff-XXXXXX.txt)
   chmod 600 "$tmpfile"
   echo "$aide_diff" > "$tmpfile"
 
@@ -122,7 +122,7 @@ send_aide_attachment() {
   local attach_resp attach_status
   attach_resp=$(curl -s -w "\n%{http_code}" \
     -F "chat_id=${TG_CHAT_ID}" \
-    -F "document=@${tmpfile}" \
+    -F "document=@${tmpfile};type=text/plain" \
     -F "caption=AIDE diff — $(date '+%Y-%m-%d %H:%M')" \
     "${extra_args[@]}" \
     "https://api.telegram.org/bot${TG_BOT_TOKEN}/sendDocument") || true
