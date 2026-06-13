@@ -1,0 +1,37 @@
+#!/bin/bash
+# aide-save-report — dailyaidecheck CRONEXITHOOK that saves a dated copy of
+# each AIDE run, so the report's aide.sh check can read aide-YYYY-MM-DD.log.
+#
+# Install:
+#   sudo install -m 755 tools/aide-save-report /usr/local/sbin/aide-save-report
+#   # then in /etc/default/aide:  CRONEXITHOOK="/usr/local/sbin/aide-save-report"
+#
+# Called by dailyaidecheck with a single argument: the exit reason
+# (success / fatal / signal / nolock / ... , optionally "early-" prefixed).
+#
+# NOTE: dailyaidecheck does NOT export its $ARUNLOG tempfile, and it deletes
+# the temp dir (rm -rf $TMPDIRIN) *before* invoking this hook — so reading
+# $ARUNLOG here is impossible. We copy from the persistent, untruncated log
+# instead: /var/log/aide/aide.log (always written by the time the hook runs).
+REASON="$1"
+REPORT_DIR="/var/log/aide"
+LOGFILE="$REPORT_DIR/aide.log"
+DATE="$(date +%Y-%m-%d)"
+DEST="$REPORT_DIR/aide-$DATE.log"
+
+# Only save on a real, completed run.
+case "$REASON" in
+    success|early-success) : ;;
+    *) echo "aide-save-report: reason '$REASON' — not saving dated copy"; exit 0 ;;
+esac
+
+if [ -s "$LOGFILE" ]; then
+    cp "$LOGFILE" "$DEST"
+    chmod 640 "$DEST"
+    echo "AIDE report saved to $DEST (reason: $REASON)"
+else
+    echo "aide-save-report: $LOGFILE missing/empty — nothing to save" >&2
+fi
+
+# Keep only the last 30 dated reports.
+find "$REPORT_DIR" -name "aide-*.log" -mtime +30 -delete
