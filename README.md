@@ -204,6 +204,24 @@ diff as a file attachment — as a reply to the main report message. Known
 daily changes (`audit.log`, `wtmp.db`) are filtered out automatically; the
 attachment only appears when something genuinely unexpected has changed.
 
+### Dated logs
+
+Both `aide.sh` and the attachment prefer a dated copy of each run,
+`/var/log/aide/aide-YYYY-MM-DD.log`, and fall back to the rolling
+`/var/log/aide/aide.log` if it is absent. The dated copy is produced by
+`tools/aide-save-report`, a `dailyaidecheck` exit hook — install it and wire
+it up in `/etc/default/aide`:
+
+```bash
+sudo install -m 755 tools/aide-save-report /usr/local/sbin/aide-save-report
+# /etc/default/aide:
+CRONEXITHOOK="/usr/local/sbin/aide-save-report"
+```
+
+It copies the persistent `aide.log` (not `dailyaidecheck`'s ephemeral
+`$ARUNLOG` tempfile, which is unexported and already deleted by the time the
+hook runs) and prunes copies older than 30 days.
+
 ## Adding a new check
 
 1. Create `checks/newcheck.sh`:
