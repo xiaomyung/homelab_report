@@ -19,5 +19,6 @@ if [[ -z "$FAILED" ]]; then
 fi
 
 COUNT=$(echo "$FAILED" | wc -l)
-NAMES=$(echo "$FAILED" | paste -sd ', ')
+# paste -sd cycles multi-char delimiter lists, so join with ',' then re-space
+NAMES=$(echo "$FAILED" | paste -sd ',' | sed 's/,/, /g')
 printf "  %-8s   %s %s\n" "Systemd:" "${COUNT} failed (${NAMES})" "⚠"

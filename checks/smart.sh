@@ -29,6 +29,7 @@ DRIVES=(
 
 RESULTS=()
 ANY_FAIL=false
+ANY_UNKNOWN=false
 
 for entry in "${DRIVES[@]}"; do
   dev="${entry%% *}"
@@ -50,8 +51,10 @@ for entry in "${DRIVES[@]}"; do
     RESULTS+=("${name} FAIL")
     ANY_FAIL=true
   else
-    # Drive exists but SMART status unclear (unsupported, permission issue, etc.)
+    # Drive exists but SMART status unclear (unsupported, permission issue,
+    # dying USB bridge) — worth a ⚠, a health check that can't run is not OK
     RESULTS+=("${name} ?")
+    ANY_UNKNOWN=true
   fi
 done
 
@@ -66,7 +69,7 @@ for r in "${RESULTS[@]}"; do
   RESULT_STR+="$r"
 done
 
-if $ANY_FAIL; then
+if $ANY_FAIL || $ANY_UNKNOWN; then
   printf "  %-8s   %s %s\n" "Drives:" "$RESULT_STR" "⚠"
 else
   printf "  %-8s   %s\n" "Drives:" "$RESULT_STR"

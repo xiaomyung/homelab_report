@@ -35,7 +35,13 @@ SUMMARY=$(awk '
 SCANNED=$(echo "$SUMMARY" | grep "^Scanned files:" | awk '{print $NF}' || true)
 INFECTED=$(echo "$SUMMARY" | grep "^Infected files:" | awk '{print $NF}' || true)
 HEADER_DATE=$(echo "$SUMMARY" | grep "^=== ClamAV scan" | sed 's/=== ClamAV scan //; s/ ===//' || true)
-SCAN_DATE=$(date -d "$HEADER_DATE" +%Y-%m-%d 2>/dev/null || date -r "$LOG" +%Y-%m-%d)
+# GNU date -d '' succeeds (prints today), so an empty header must be guarded
+# explicitly or a garbled log would claim a fresh scan.
+if [[ -n "$HEADER_DATE" ]]; then
+  SCAN_DATE=$(date -d "$HEADER_DATE" +%Y-%m-%d 2>/dev/null) || SCAN_DATE=$(date -r "$LOG" +%Y-%m-%d)
+else
+  SCAN_DATE=$(date -r "$LOG" +%Y-%m-%d)
+fi
 
 SCANNED=${SCANNED:-unknown}; INFECTED=${INFECTED:-unknown}
 VALUE="${SCAN_DATE} · ${SCANNED} files · ${INFECTED} infected"
