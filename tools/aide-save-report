@@ -26,12 +26,15 @@ case "$REASON" in
 esac
 
 if [ -s "$LOGFILE" ]; then
-    cp "$LOGFILE" "$DEST"
-    chmod 640 "$DEST"
-    echo "AIDE report saved to $DEST (reason: $REASON)"
+    if cp "$LOGFILE" "$DEST" && chmod 640 "$DEST"; then
+        echo "AIDE report saved to $DEST (reason: $REASON)"
+    else
+        echo "aide-save-report: failed to save $DEST" >&2
+        exit 1
+    fi
 else
     echo "aide-save-report: $LOGFILE missing/empty — nothing to save" >&2
 fi
 
-# Keep only the last 30 dated reports.
+# Prune dated reports older than 30 days.
 find "$REPORT_DIR" -name "aide-*.log" -mtime +30 -delete

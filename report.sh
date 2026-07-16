@@ -55,6 +55,26 @@ html_escape() {
   sed 's/&/\&amp;/g; s/</\&lt;/g; s/>/\&gt;/g'
 }
 
+# Call a Telegram Bot API method: tg_api <method> <curl-arg>...
+# Extra args are passed to curl verbatim (-F fields or --data-urlencode pairs).
+# Prints the response body; warns on any failure to stderr.
+# Returns 0 only when the API answered HTTP 200.
+tg_api() {
+  local method="$1"; shift
+  local resp status
+  resp=$(curl -s --max-time 30 --connect-timeout 10 -w "\n%{http_code}" "$@" \
+    "https://api.telegram.org/bot${TG_BOT_TOKEN}/${method}") || {
+    echo "WARNING: curl failed to reach Telegram API (${method})" >&2
+    return 1
+  }
+  status=$(tail -n1 <<<"$resp")
+  head -n -1 <<<"$resp"
+  if [[ "$status" != "200" ]]; then
+    echo "WARNING: ${method} returned HTTP ${status}" >&2
+    return 1
+  fi
+}
+
 # ── AIDE attachment ───────────────────────────────────────────────────────────
 
 # Sends a trimmed AIDE diff as a file attachment, as a reply to the main message.
@@ -64,8 +84,15 @@ html_escape() {
 send_aide_attachment() {
   local reply_to_id="${1:-}"
   local log="/var/log/aide/aide-$(date +%Y-%m-%d).log"
-  [[ -f "$log" && -s "$log" ]] || log="/var/log/aide/aide.log"
-  [[ -f "$log" && -s "$log" ]] || return 0
+  if [[ ! -f "$log" || ! -s "$log" ]]; then
+    log="/var/log/aide/aide.log"
+    [[ -f "$log" && -s "$log" ]] || return 0
+    # Mirror aide.sh's staleness rule: never attach a days-old fallback diff
+    # as if it were today's.
+    local mtime
+    mtime=$(stat -c %Y "$log")
+    (( ( $(date +%s) - mtime ) / 86400 > 2 )) && return 0
+  fi
 
   # Extract diff sections, filtering out expected daily-baseline files
   # (audit.log, wtmp.db) including their detail blocks.
@@ -91,11 +118,14 @@ send_aide_attachment() {
       detail_hdr = $0; next
     }
 
+    # Trailer (database attribute hashes, end timestamps) — not part of the diff
+    /^The attributes of the \(uncompressed\) database/ { exit }
+
     # Separator lines — buffer in detail mode, print otherwise
     /^-{10,}$/ { if (in_detail) { pending_sep = $0; next } else { print; next } }
 
-    # "File: /path" starts a new detail block
-    /^File: / {
+    # "File: /path" (or Directory:/Link:/Socket:) starts a new detail block
+    /^(File|Directory|Link|Socket): / {
       if ($2 in exclude) { skip_block = 1 } else {
         skip_block = 0
         if (detail_hdr != "") { print ""; print detail_hdr; print "---------------------------------------------------"; detail_hdr = "" }
@@ -120,36 +150,33 @@ send_aide_attachment() {
   [[ -z "$meaningful" ]] && return 0
 
   local tmpfile
-  tmpfile=$(mktemp /tmp/aide-diff-XXXXXX.txt)
+  tmpfile=$(mktemp /tmp/aide-diff-XXXXXX.txt) || {
+    echo "WARNING: mktemp failed, skipping AIDE attachment" >&2
+    return 0
+  }
   chmod 600 "$tmpfile"
   echo "$aide_diff" > "$tmpfile"
 
   local extra_args=()
   [[ -n "$reply_to_id" ]] && extra_args+=(-F "reply_to_message_id=${reply_to_id}")
 
-  local attach_resp attach_status
-  attach_resp=$(curl -s -w "\n%{http_code}" \
+  tg_api sendDocument \
     -F "chat_id=${TG_CHAT_ID}" \
     -F "document=@${tmpfile};type=text/plain" \
     -F "caption=AIDE diff — $(date '+%Y-%m-%d %H:%M')" \
-    "${extra_args[@]}" \
-    "https://api.telegram.org/bot${TG_BOT_TOKEN}/sendDocument") || true
-  attach_status=$(echo "$attach_resp" | tail -n1)
-  if [[ "$attach_status" != "200" ]]; then
-    echo "WARNING: AIDE attachment send returned HTTP ${attach_status}" >&2
-  fi
+    "${extra_args[@]}" >/dev/null || true
 
   rm -f "$tmpfile"
 }
 
-# ── LLM "at a glance" summary ─────────────────────────────────────────────────
+# ── "At a glance" summary ─────────────────────────────────────────────────────
 
-# Sends an LLM-generated anomaly summary as a reply to the main message.
-# Uses the always-on CPU Ollama endpoint at localhost:11435 (independent of
-# llm-mode). Summary script always exits 0 and returns either "✅ All clear",
-# 3–5 bullet anomalies, or "⚠️ Summary unavailable (<reason>)".
+# Sends an anomaly summary as a reply to the main message. The summary script
+# extracts every report line ending with the ⚠ marker (the checks have already
+# decided what is anomalous). It always exits 0 and returns either
+# "✅ All clear", one bullet per ⚠ line, or "⚠️ Summary unavailable (<reason>)".
 # Args: $1 — message_id to reply to
-#       $2 — HTML-stripped main message to feed the LLM
+#       $2 — HTML-stripped main message to summarise
 send_summary() {
   local reply_to_id="${1:-}"
   local plain_msg="${2:-}"
@@ -159,7 +186,7 @@ send_summary() {
   summary=$(printf '%s' "$plain_msg" | bash "${SCRIPT_DIR}/checks/at-a-glance.sh" 2>/dev/null) || return 0
   [[ -n "$summary" ]] || return 0
 
-  # Escape HTML so <pre> rendering is safe (the LLM could emit characters
+  # Escape HTML so <pre> rendering is safe (bullets echo report content that
   # Telegram's HTML parser would otherwise swallow).
   local escaped
   escaped=$(printf '%s' "$summary" | html_escape)
@@ -170,17 +197,11 @@ send_summary() {
   local extra_args=()
   [[ -n "$reply_to_id" ]] && extra_args+=(--data-urlencode "reply_to_message_id=${reply_to_id}")
 
-  local resp status
-  resp=$(curl -s -w "\n%{http_code}" \
+  tg_api sendMessage \
     --data-urlencode "chat_id=${TG_CHAT_ID}" \
     --data-urlencode "text=${text}" \
     --data-urlencode "parse_mode=HTML" \
-    "${extra_args[@]}" \
-    "https://api.telegram.org/bot${TG_BOT_TOKEN}/sendMessage") || true
-  status=$(echo "$resp" | tail -n1)
-  if [[ "$status" != "200" ]]; then
-    echo "WARNING: summary send returned HTTP ${status}" >&2
-  fi
+    "${extra_args[@]}" >/dev/null || true
 }
 
 # ── Run checks ────────────────────────────────────────────────────────────────
@@ -189,12 +210,14 @@ send_summary() {
 # HTML-escapes output so <pre> rendering is safe.
 run_check() {
   local script="${SCRIPT_DIR}/checks/${1}"
-  if [[ ! -x "$script" ]]; then
-    echo "  [${1}: script not found or not executable]"
+  if [[ ! -f "$script" || ! -r "$script" ]]; then
+    echo "  [${1}: script not found]"
     return 0
   fi
   local out
-  out=$(bash "$script" 2>/dev/null) || out="  [${1}: error — check log for details]"
+  # stderr flows through to the systemd journal; timeout keeps one hung
+  # check from stalling the whole report
+  out=$(timeout 60 bash "$script") || out="  [${1}: error — see journal]"
   # Escape HTML special characters so they render literally inside <pre>
   echo "$out" | html_escape
 }
@@ -259,32 +282,25 @@ MSG="🏠 Homelab Report — ${DATE} ${TIME}
 
 # ── Send via Telegram Bot API ─────────────────────────────────────────────────
 
+# Strip HTML tags and decode the three entities run_check introduces, so the
+# summary sees the same text a human would see rendered in Telegram.
+MSG_PLAIN=$(echo "$MSG" | sed -e 's/<[^>]*>//g' -e 's/&lt;/</g' -e 's/&gt;/>/g' -e 's/&amp;/\&/g')
+
 # parse_mode=HTML enables <pre> monospace blocks.
 # --data-urlencode safely handles any characters in the message text.
-# Capture full JSON response to extract message_id for reply threading.
-RESPONSE=$(curl -s -w "\n%{http_code}" \
-  --data-urlencode "chat_id=${TG_CHAT_ID}" \
-  --data-urlencode "text=${MSG}" \
-  --data-urlencode "parse_mode=HTML" \
-  "https://api.telegram.org/bot${TG_BOT_TOKEN}/sendMessage") || {
-  echo "WARNING: curl failed to reach Telegram API" >&2
-  exit 0
-}
-
-HTTP_STATUS=$(echo "$RESPONSE" | tail -n1)
-RESPONSE_BODY=$(echo "$RESPONSE" | head -n-1)
-
-if [[ "$HTTP_STATUS" != "200" ]]; then
-  echo "WARNING: Telegram API returned HTTP ${HTTP_STATUS}" >&2
+# Telegram rejects messages over 4096 chars — on a catastrophic day fall back
+# to truncated plain text rather than losing the whole report.
+if (( ${#MSG} <= 4096 )); then
+  SEND_ARGS=(--data-urlencode "text=${MSG}" --data-urlencode "parse_mode=HTML")
+else
+  echo "WARNING: report exceeds 4096 chars (${#MSG}), sending truncated plain text" >&2
+  SEND_ARGS=(--data-urlencode "text=${MSG_PLAIN:0:4000}
+… [truncated]")
 fi
 
-# Extract message_id so the AIDE attachment is sent as a reply (visually linked)
-MSG_ID=$(echo "$RESPONSE_BODY" | grep -o '"message_id":[0-9]*' | grep -o '[0-9]*' || true)
-
-if [[ "$HTTP_STATUS" == "200" ]]; then
-  # Strip HTML tags and decode the three entities run_check introduces, so the
-  # LLM sees the same text a human would see rendered in Telegram.
-  MSG_PLAIN=$(echo "$MSG" | sed -e 's/<[^>]*>//g' -e 's/&lt;/</g' -e 's/&gt;/>/g' -e 's/&amp;/\&/g')
+if RESPONSE_BODY=$(tg_api sendMessage --data-urlencode "chat_id=${TG_CHAT_ID}" "${SEND_ARGS[@]}"); then
+  # Extract message_id so the replies are visually linked to the main message
+  MSG_ID=$(echo "$RESPONSE_BODY" | grep -o '"message_id":[0-9]*' | grep -o '[0-9]*' || true)
   send_summary "$MSG_ID" "$MSG_PLAIN"
   send_aide_attachment "$MSG_ID"
 fi

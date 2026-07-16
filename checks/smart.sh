@@ -29,6 +29,7 @@ DRIVES=(
 
 RESULTS=()
 ANY_FAIL=false
+ANY_UNKNOWN=false
 
 for entry in "${DRIVES[@]}"; do
   dev="${entry%% *}"
@@ -40,18 +41,34 @@ for entry in "${DRIVES[@]}"; do
   # Skip if device node doesn't exist
   [[ -e "$dev" ]] || continue
 
-  # Run smartctl -H; exit code 0=healthy, non-zero=issue or unsupported
-  # Capture output; don't let failure abort the script
+  # Run smartctl -H; exit code 0=healthy, non-zero=issue or unsupported.
+  # Capture output; don't let failure abort the script.
+  #
+  # -n standby is deliberately NOT used: some drives wake on the CHECK POWER
+  # MODE probe itself (Seagate ST1000LM024) and some USB bridges misreport it
+  # in both directions (Orico sat bridge) — unreliable on exactly the
+  # hardware that spins down. Instead: a spun-down drive can fail its first
+  # query while spinning up, so retry once after a grace period before
+  # flagging it unknown.
   output=$(smartctl -H $flags "$dev" 2>/dev/null) || true
+  if ! echo "$output" | grep -qE "PASSED|FAILED"; then
+    sleep 10
+    output=$(smartctl -H $flags "$dev" 2>/dev/null) || true
+  fi
 
   if echo "$output" | grep -q "PASSED"; then
     RESULTS+=("${name} OK")
   elif echo "$output" | grep -q "FAILED"; then
     RESULTS+=("${name} FAIL")
     ANY_FAIL=true
+  elif echo "$output" | grep -qiE "STANDBY|SLEEP"; then
+    # Spun-down disk is normal (idle USB HDD) — not a health problem
+    RESULTS+=("${name} standby")
   else
-    # Drive exists but SMART status unclear (unsupported, permission issue, etc.)
+    # Drive exists but SMART status unclear (unsupported, permission issue,
+    # dying USB bridge) — worth a ⚠, a health check that can't run is not OK
     RESULTS+=("${name} ?")
+    ANY_UNKNOWN=true
   fi
 done
 
@@ -66,7 +83,7 @@ for r in "${RESULTS[@]}"; do
   RESULT_STR+="$r"
 done
 
-if $ANY_FAIL; then
+if $ANY_FAIL || $ANY_UNKNOWN; then
   printf "  %-8s   %s %s\n" "Drives:" "$RESULT_STR" "⚠"
 else
   printf "  %-8s   %s\n" "Drives:" "$RESULT_STR"

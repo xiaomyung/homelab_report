@@ -42,21 +42,24 @@ TODAY=$(date +%Y-%m-%d)
 if [[ ! -f "$BACKUP_LOG" ]]; then
   printf "  %-9s  %s\n" "Backup:" "no log found"
 else
-  # Extract lines from today's date in the log
-  TODAY_LINES=$(grep "^\[$TODAY" "$BACKUP_LOG" 2>/dev/null || true)
+  # Extract today's lines, then keep only the LAST run (from the final
+  # "Starting backup:" onward) so a failed 04:00 run followed by a successful
+  # re-run reports the re-run, not the stale error.
+  TODAY_LINES=$(grep "^\[$TODAY" "$BACKUP_LOG" 2>/dev/null \
+    | awk '/Starting backup:/{buf=""} {buf=buf $0 "\n"} END{printf "%s", buf}' \
+    || true)
 
   if [[ -z "$TODAY_LINES" ]]; then
     printf "  %-9s  %s\n" "Backup:" "no run today"
   elif echo "$TODAY_LINES" | grep -q "\[ERROR\]"; then
-    FAIL_TIME=$(echo "$TODAY_LINES" | grep "\[ERROR\]" | tail -1 | grep -oP '\d{4}-\d{2}-\d{2} \d{2}:\d{2}' | head -1)
-    printf "  %-9s  %s %s\n" "Backup:" "${FAIL_TIME} · FAILED (check ${BACKUP_LOG})" "⚠"
+    FAIL_TIME=$(echo "$TODAY_LINES" | grep "\[ERROR\]" | tail -1 | grep -oP '\d{4}-\d{2}-\d{2} \d{2}:\d{2}' | head -1 || true)
+    printf "  %-9s  %s %s\n" "Backup:" "${FAIL_TIME:-today} · FAILED (check ${BACKUP_LOG})" "⚠"
   elif echo "$TODAY_LINES" | grep -q "Backup created successfully"; then
-    SUCCESS_LINE=$(echo "$TODAY_LINES" | grep "Backup created successfully" | tail -1)
-    BACKUP_TIME=$(echo "$SUCCESS_LINE" | grep -oP '\d{4}-\d{2}-\d{2} \d{2}:\d{2}' | head -1)
-    BACKUP_SIZE=$(echo "$SUCCESS_LINE" | grep -oP '\(\K[^)]+(?=\))' | tail -1)
+    SUCCESS_LINE=$(echo "$TODAY_LINES" | grep "Backup created successfully" | tail -1 || true)
+    BACKUP_TIME=$(echo "$SUCCESS_LINE" | grep -oP '\d{4}-\d{2}-\d{2} \d{2}:\d{2}' | head -1 || true)
+    BACKUP_SIZE=$(echo "$SUCCESS_LINE" | grep -oP '\(\K[^)]+(?=\))' | tail -1 || true)
 
-    DURATION_LINE=$(echo "$TODAY_LINES" | grep "Duration:" | tail -1)
-    DURATION=$(echo "$DURATION_LINE" | grep -oP 'Duration: \K\d+s' | head -1)
+    DURATION=$(echo "$TODAY_LINES" | grep "Duration:" | tail -1 | grep -oP 'Duration: \K\d+s' | head -1 || true)
     DURATION=${DURATION:-"?s"}
 
     if echo "$TODAY_LINES" | grep -q "Cloud copy:"; then
@@ -67,17 +70,16 @@ else
       STORE="local"
     fi
 
-    printf "  %-9s  %s\n" "Backup:" "${BACKUP_TIME} · ✓ ${BACKUP_SIZE} · ${STORE} · ${DURATION}"
+    printf "  %-9s  %s\n" "Backup:" "${BACKUP_TIME:-today} · ✓ ${BACKUP_SIZE:-?} · ${STORE} · ${DURATION}"
   else
     # Today's lines exist but no success or error yet.
+    START_TIME=$(echo "$TODAY_LINES" | grep "Starting backup:" | tail -1 | grep -oP '\d{4}-\d{2}-\d{2} \d{2}:\d{2}' | head -1 || true)
     # Check if the backup is currently running (lock file held).
     if flock -n /var/lock/server-backup.lock true 2>/dev/null; then
       # Lock is free → backup started but finished without a clear result line
-      START_TIME=$(echo "$TODAY_LINES" | grep "Starting backup:" | tail -1 | grep -oP '\d{4}-\d{2}-\d{2} \d{2}:\d{2}' | head -1)
       printf "  %-9s  %s %s\n" "Backup:" "${START_TIME:-today} · started but result unclear (check ${BACKUP_LOG})" "⚠"
     else
       # Lock is held → backup is currently in progress
-      START_TIME=$(echo "$TODAY_LINES" | grep "Starting backup:" | tail -1 | grep -oP '\d{4}-\d{2}-\d{2} \d{2}:\d{2}' | head -1)
       printf "  %-9s  %s\n" "Backup:" "${START_TIME:-today} · in progress..."
     fi
   fi
@@ -97,12 +99,11 @@ else
   elif echo "$TODAY_LINES" | grep -q "not mounted"; then
     printf "  %-9s  %s\n" "Recovery:" "skipped (cloud not mounted)"
   elif echo "$TODAY_LINES" | grep -q "Recovery snapshot complete"; then
-    SNAP_LINE=$(echo "$TODAY_LINES" | grep "Recovery snapshot complete" | tail -1)
-    SNAP_TIME=$(echo "$SNAP_LINE" | grep -oP '\d{4}-\d{2}-\d{2}T\d{2}:\d{2}' | head -1 | tr 'T' ' ')
-    printf "  %-9s  %s\n" "Recovery:" "${SNAP_TIME} · ✓ snapshot saved"
+    SNAP_TIME=$(echo "$TODAY_LINES" | grep "Recovery snapshot complete" | tail -1 | grep -oP '\d{4}-\d{2}-\d{2}T\d{2}:\d{2}' | head -1 | tr 'T' ' ' || true)
+    printf "  %-9s  %s\n" "Recovery:" "${SNAP_TIME:-today} · ✓ snapshot saved"
   elif echo "$TODAY_LINES" | grep -q "\[ERROR\]"; then
-    FAIL_TIME=$(echo "$TODAY_LINES" | grep "\[ERROR\]" | tail -1 | grep -oP '\d{4}-\d{2}-\d{2}T\d{2}:\d{2}' | head -1 | tr 'T' ' ')
-    printf "  %-9s  %s %s\n" "Recovery:" "${FAIL_TIME} · FAILED (check ${RECOVERY_LOG})" "⚠"
+    FAIL_TIME=$(echo "$TODAY_LINES" | grep "\[ERROR\]" | tail -1 | grep -oP '\d{4}-\d{2}-\d{2}T\d{2}:\d{2}' | head -1 | tr 'T' ' ' || true)
+    printf "  %-9s  %s %s\n" "Recovery:" "${FAIL_TIME:-today} · FAILED (check ${RECOVERY_LOG})" "⚠"
   else
     printf "  %-9s  %s\n" "Recovery:" "ran today (check log for details)"
   fi

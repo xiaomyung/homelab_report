@@ -25,7 +25,8 @@ printf "  %-8s   %s\n" "Uptime:" "$UPTIME"
 if [[ -f /var/run/reboot-required ]]; then
   REASON=""
   if [[ -f /var/run/reboot-required.pkgs ]]; then
-    PKGS=$(head -3 /var/run/reboot-required.pkgs | paste -sd ', ')
+    # paste -sd cycles multi-char delimiter lists, so join with ',' then re-space
+    PKGS=$(head -3 /var/run/reboot-required.pkgs | paste -sd ',' | sed 's/,/, /g')
     REASON=" (${PKGS})"
   fi
   printf "  %-8s   %s %s\n" "Reboot:" "required${REASON}" "⚠"

@@ -41,7 +41,9 @@ while IFS=', ' read -r jail; do
   [[ -z "$jail" ]] && continue
   BANNED=$(fail2ban-client status "$jail" 2>/dev/null \
     | grep "Currently banned:" | awk '{print $NF}' || true)
-  TOTAL_BANNED=$(( TOTAL_BANNED + ${BANNED:-0} ))
+  # Guard non-numeric output — arithmetic on it would abort the check
+  [[ "$BANNED" =~ ^[0-9]+$ ]] || BANNED=0
+  TOTAL_BANNED=$(( TOTAL_BANNED + BANNED ))
 done <<< "$(echo "$JAIL_LIST" | tr ',' '\n' | sed 's/^ //; s/ $//')"
 
 printf "  %-9s  %s\n" "fail2ban:" "${JAIL_COUNT} jail(s) · ${TOTAL_BANNED} banned"
