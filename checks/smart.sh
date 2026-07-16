@@ -42,9 +42,19 @@ for entry in "${DRIVES[@]}"; do
   [[ -e "$dev" ]] || continue
 
   # Run smartctl -H; exit code 0=healthy, non-zero=issue or unsupported.
-  # -n standby skips (and does not wake) a spun-down drive.
-  # Capture output; don't let failure abort the script
-  output=$(smartctl -H -n standby $flags "$dev" 2>/dev/null) || true
+  # Capture output; don't let failure abort the script.
+  #
+  # -n standby is deliberately NOT used: some drives wake on the CHECK POWER
+  # MODE probe itself (Seagate ST1000LM024) and some USB bridges misreport it
+  # in both directions (Orico sat bridge) — unreliable on exactly the
+  # hardware that spins down. Instead: a spun-down drive can fail its first
+  # query while spinning up, so retry once after a grace period before
+  # flagging it unknown.
+  output=$(smartctl -H $flags "$dev" 2>/dev/null) || true
+  if ! echo "$output" | grep -qE "PASSED|FAILED"; then
+    sleep 10
+    output=$(smartctl -H $flags "$dev" 2>/dev/null) || true
+  fi
 
   if echo "$output" | grep -q "PASSED"; then
     RESULTS+=("${name} OK")
