@@ -64,8 +64,15 @@ html_escape() {
 send_aide_attachment() {
   local reply_to_id="${1:-}"
   local log="/var/log/aide/aide-$(date +%Y-%m-%d).log"
-  [[ -f "$log" && -s "$log" ]] || log="/var/log/aide/aide.log"
-  [[ -f "$log" && -s "$log" ]] || return 0
+  if [[ ! -f "$log" || ! -s "$log" ]]; then
+    log="/var/log/aide/aide.log"
+    [[ -f "$log" && -s "$log" ]] || return 0
+    # Mirror aide.sh's staleness rule: never attach a days-old fallback diff
+    # as if it were today's.
+    local mtime
+    mtime=$(stat -c %Y "$log")
+    (( ( $(date +%s) - mtime ) / 86400 > 2 )) && return 0
+  fi
 
   # Extract diff sections, filtering out expected daily-baseline files
   # (audit.log, wtmp.db) including their detail blocks.
@@ -91,11 +98,14 @@ send_aide_attachment() {
       detail_hdr = $0; next
     }
 
+    # Trailer (database attribute hashes, end timestamps) — not part of the diff
+    /^The attributes of the \(uncompressed\) database/ { exit }
+
     # Separator lines — buffer in detail mode, print otherwise
     /^-{10,}$/ { if (in_detail) { pending_sep = $0; next } else { print; next } }
 
-    # "File: /path" starts a new detail block
-    /^File: / {
+    # "File: /path" (or Directory:/Link:/Socket:) starts a new detail block
+    /^(File|Directory|Link|Socket): / {
       if ($2 in exclude) { skip_block = 1 } else {
         skip_block = 0
         if (detail_hdr != "") { print ""; print detail_hdr; print "---------------------------------------------------"; detail_hdr = "" }
@@ -120,7 +130,10 @@ send_aide_attachment() {
   [[ -z "$meaningful" ]] && return 0
 
   local tmpfile
-  tmpfile=$(mktemp /tmp/aide-diff-XXXXXX.txt)
+  tmpfile=$(mktemp /tmp/aide-diff-XXXXXX.txt) || {
+    echo "WARNING: mktemp failed, skipping AIDE attachment" >&2
+    return 0
+  }
   chmod 600 "$tmpfile"
   echo "$aide_diff" > "$tmpfile"
 
