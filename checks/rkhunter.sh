@@ -5,6 +5,12 @@
 # Output:  "  rkhunter:  YYYY-MM-DD · all clear"
 #          "  rkhunter:  YYYY-MM-DD · N warning(s) ⚠"
 # Format:  printf "  %-9s  %s\n"  (values start at column 13)
+#
+# Debian's daily cron runs rkhunter with --appendlog, so the log accumulates
+# every past run. Warnings are counted only for the LAST run (the counter
+# resets on each "Start date is" boundary line); the scan date comes from
+# that same boundary line, falling back to the log's mtime.
+#
 # Test:    sudo bash checks/rkhunter.sh
 # Always exits 0.
 
@@ -19,17 +25,18 @@ fi
 
 MTIME=$(stat -c %Y "$LOG")
 AGE_DAYS=$(( ($(date +%s) - MTIME) / 86400 ))
-SCAN_DATE=$(date -d "@$MTIME" +%Y-%m-%d)
 
 if [[ $AGE_DAYS -gt 2 ]]; then
-  printf "  %-9s  no recent run (last: %s, %dd ago) ⚠\n" "rkhunter:" "$SCAN_DATE" "$AGE_DAYS"
+  printf "  %-9s  no recent run (last: %s, %dd ago) ⚠\n" "rkhunter:" "$(date -d "@$MTIME" +%F)" "$AGE_DAYS"
   exit 0
 fi
 
 # [ Warning ] is rkhunter's single marker for ALL problems — suspicious files,
 # rootkit signatures, infected binaries, config issues. Everything bad is a warning.
-WARNING_COUNT=$(grep -c '\[ Warning \]' "$LOG" 2>/dev/null || true)
-WARNING_COUNT=${WARNING_COUNT:-0}
+WARNING_COUNT=$(awk '/Info: Start date is/{c=0} /\[ Warning \]/{c++} END{print c+0}' "$LOG")
+
+START_STR=$(grep 'Info: Start date is' "$LOG" | tail -1 | sed 's/.*Start date is //' || true)
+SCAN_DATE=$(date -d "$START_STR" +%F 2>/dev/null) || SCAN_DATE=$(date -d "@$MTIME" +%F)
 
 if [[ "$WARNING_COUNT" -eq 0 ]]; then
   VALUE="${SCAN_DATE} · all clear"
