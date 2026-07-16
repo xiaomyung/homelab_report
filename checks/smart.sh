@@ -41,15 +41,19 @@ for entry in "${DRIVES[@]}"; do
   # Skip if device node doesn't exist
   [[ -e "$dev" ]] || continue
 
-  # Run smartctl -H; exit code 0=healthy, non-zero=issue or unsupported
+  # Run smartctl -H; exit code 0=healthy, non-zero=issue or unsupported.
+  # -n standby skips (and does not wake) a spun-down drive.
   # Capture output; don't let failure abort the script
-  output=$(smartctl -H $flags "$dev" 2>/dev/null) || true
+  output=$(smartctl -H -n standby $flags "$dev" 2>/dev/null) || true
 
   if echo "$output" | grep -q "PASSED"; then
     RESULTS+=("${name} OK")
   elif echo "$output" | grep -q "FAILED"; then
     RESULTS+=("${name} FAIL")
     ANY_FAIL=true
+  elif echo "$output" | grep -qiE "STANDBY|SLEEP"; then
+    # Spun-down disk is normal (idle USB HDD) — not a health problem
+    RESULTS+=("${name} standby")
   else
     # Drive exists but SMART status unclear (unsupported, permission issue,
     # dying USB bridge) — worth a ⚠, a health check that can't run is not OK
