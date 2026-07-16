@@ -4,8 +4,8 @@
 # Reads:   /var/log/wtmp via `last`
 # Output:  "  Logins:    none in last 24h"
 #          "  Logins:    2 in last 24h"
-#          "             apollo from 192.168.1.10 at 03-28 10:30"
-#          "             root at 03-27 22:15 (local)"
+#          "             apollo from 192.168.1.10 at 03-28, last 10:30, (2)"
+#          "             root at 03-27, last 22:15, (1) (local)"
 # Format:  printf "  %-8s   %s\n" for the count line;
 #          13-space indent for each login entry.
 #
@@ -15,7 +15,8 @@
 # last --time-format iso field layout:
 #   With source IP:  user  tty  source  login-time  [- logout-time (dur)]
 #   Without source:  user  tty  login-time  [- logout-time (dur)]
-# Detected by checking whether field 3 contains 'T' (ISO timestamp marker).
+# Disambiguated by whether field 3 has the ISO-timestamp shape (a bare
+# 'T' check would misparse hostnames containing a T).
 #
 # Test:    bash checks/logins.sh
 # Always exits 0 — never aborts the report.
@@ -26,36 +27,28 @@ CUTOFF=$(date -d '24 hours ago' +%s)
 # 13 spaces — aligns under value column (2 + 8 label + 3 sep)
 INDENT="             "
 
-# Parse a last --time-format iso line; sets USER, SOURCE, TS.
-# SOURCE is empty string for local/no-source logins.
-parse_line() {
-  local line="$1"
-  USER=$(echo "$line" | awk '{print $1}')
-  local f3
-  f3=$(echo "$line" | awk '{print $3}')
-  # If field 3 contains 'T' it is an ISO timestamp → no source IP in this entry
-  if [[ "$f3" == *T* ]]; then
-    SOURCE=""
-    TS="$f3"
-  else
-    SOURCE="$f3"
-    TS=$(echo "$line" | awk '{print $4}')
-  fi
-}
-
-TODAYS=$(last --time-format iso 2>/dev/null \
+# Filter `last` output down to pre-parsed in-window records, one per line:
+#   user|source|MM-DD|HH:MM
+# source is empty for local/no-source logins. A single `date` call per line
+# yields both the epoch (window filter) and the display date/time.
+RECORDS=$(last --time-format iso 2>/dev/null \
   | grep -vE "^reboot|^wtmp" \
   | while IFS= read -r line; do
       [[ -z "$line" ]] && continue
-      parse_line "$line"
-      # Skip if TS doesn't look like an ISO timestamp (guards against '-' separator)
-      [[ "$TS" == *T* ]] || continue
-      TS_EPOCH=$(date -d "$TS" +%s 2>/dev/null) || continue
-      [[ "$TS_EPOCH" -ge "$CUTOFF" ]] && echo "$line"
+      read -r user _ f3 f4 _ <<< "$line"
+      if [[ "$f3" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}T ]]; then
+        src=""; ts="$f3"
+      else
+        src="$f3"; ts="$f4"
+      fi
+      [[ "$ts" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}T ]] || continue
+      out=$(date -d "$ts" '+%s %m-%d %H:%M' 2>/dev/null) || continue
+      read -r epoch dt tm <<< "$out"
+      [[ "$epoch" -ge "$CUTOFF" ]] && printf '%s|%s|%s|%s\n' "$user" "$src" "$dt" "$tm"
     done \
   || true)
 
-COUNT=$(echo "$TODAYS" | grep -c "[a-z]" || true)
+COUNT=$(grep -c '|' <<< "$RECORDS" || true)
 COUNT=${COUNT:-0}
 
 if [[ "$COUNT" -eq 0 ]]; then
@@ -65,23 +58,22 @@ fi
 
 printf "  %-8s   %s\n" "Logins:" "${COUNT} in last 24h"
 
+# Group by user+source+date; records are newest-first, so the first time
+# seen per group is that group's most recent login.
 declare -A counts
 declare -A latest
 declare -a order
 
-while IFS= read -r line; do
-  [[ -z "$line" ]] && continue
-  parse_line "$line"
-  DATE=$(date -d "$TS" '+%m-%d' 2>/dev/null || echo "?")
-  TIME=$(date -d "$TS" '+%H:%M' 2>/dev/null || echo "?")
-  KEY="${USER}|${SOURCE}|${DATE}"
+while IFS='|' read -r user src dt tm; do
+  [[ -z "$user" ]] && continue
+  KEY="${user}|${src}|${dt}"
   if [[ -z "${counts[$KEY]+x}" ]]; then
     order+=("$KEY")
     counts[$KEY]=0
-    latest[$KEY]="$TIME"
+    latest[$KEY]="$tm"
   fi
   counts[$KEY]=$(( counts[$KEY] + 1 ))
-done <<< "$TODAYS"
+done <<< "$RECORDS"
 
 mapfile -t sorted_keys < <(
   for KEY in "${order[@]}"; do

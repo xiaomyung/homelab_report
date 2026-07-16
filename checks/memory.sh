@@ -17,18 +17,13 @@ set -euo pipefail
 #               total        used        free      shared  buff/cache   available
 # Mem:           15Gi       4.2Gi       8.1Gi       312Mi       3.1Gi        10Gi
 # Swap:         2.0Gi          0B       2.0Gi
-
-MEM_LINE=$(free -h | awk 'NR==2')
-MEM_USED=$(echo "$MEM_LINE" | awk '{print $3}')
-MEM_TOTAL=$(echo "$MEM_LINE" | awk '{print $2}')
-
-SWAP_LINE=$(free -h | awk 'NR==3')
-SWAP_USED_H=$(echo "$SWAP_LINE" | awk '{print $3}')
-SWAP_TOTAL_H=$(echo "$SWAP_LINE" | awk '{print $2}')
-
-# Raw bytes for threshold calculation
-SWAP_USED_KB=$(free | awk 'NR==3 {print $3}')
-SWAP_TOTAL_KB=$(free | awk 'NR==3 {print $2}')
+#
+# One human-readable call for display values, one raw call for the swap
+# threshold arithmetic — each parsed in a single awk pass.
+read -r MEM_USED MEM_TOTAL SWAP_USED_H SWAP_TOTAL_H \
+  < <(free -h | awk 'NR==2{u=$3; t=$2} NR==3{print u, t, $3, $2}')
+read -r SWAP_USED_KB SWAP_TOTAL_KB \
+  < <(free | awk 'NR==3{print $3, $2}')
 
 VALUE="RAM ${MEM_USED}/${MEM_TOTAL}"
 WARN=""

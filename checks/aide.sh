@@ -10,6 +10,7 @@
 # Always exits 0.
 
 set -euo pipefail
+source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 
 DATED_LOG="/var/log/aide/aide-$(date +%Y-%m-%d).log"
 FALLBACK_LOG="/var/log/aide/aide.log"
@@ -18,13 +19,7 @@ if [[ -f "$DATED_LOG" && -s "$DATED_LOG" ]]; then
   LOG="$DATED_LOG"
 elif [[ -f "$FALLBACK_LOG" && -s "$FALLBACK_LOG" ]]; then
   LOG="$FALLBACK_LOG"
-  MTIME=$(stat -c %Y "$LOG")
-  AGE_DAYS=$(( ($(date +%s) - MTIME) / 86400 ))
-  if [[ $AGE_DAYS -gt 2 ]]; then
-    LAST_DATE=$(date -d "@$MTIME" +%Y-%m-%d)
-    printf "  %-9s  no recent run (last: %s, %dd ago) ⚠\n" "AIDE:" "$LAST_DATE" "$AGE_DAYS"
-    exit 0
-  fi
+  stale_guard "$LOG" 2 "AIDE:" || exit 0
 else
   printf "  %-9s  no log found\n" "AIDE:"
   exit 0

@@ -15,6 +15,7 @@
 # Always exits 0.
 
 set -euo pipefail
+source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 
 LOG="/var/log/rkhunter.log"
 
@@ -23,20 +24,18 @@ if [[ ! -f "$LOG" ]]; then
   exit 0
 fi
 
-MTIME=$(stat -c %Y "$LOG")
-AGE_DAYS=$(( ($(date +%s) - MTIME) / 86400 ))
-
-if [[ $AGE_DAYS -gt 2 ]]; then
-  printf "  %-9s  no recent run (last: %s, %dd ago) ⚠\n" "rkhunter:" "$(date -d "@$MTIME" +%F)" "$AGE_DAYS"
-  exit 0
-fi
+stale_guard "$LOG" 2 "rkhunter:" || exit 0
 
 # [ Warning ] is rkhunter's single marker for ALL problems — suspicious files,
 # rootkit signatures, infected binaries, config issues. Everything bad is a warning.
 WARNING_COUNT=$(awk '/Info: Start date is/{c=0} /\[ Warning \]/{c++} END{print c+0}' "$LOG")
 
 START_STR=$(grep 'Info: Start date is' "$LOG" | tail -1 | sed 's/.*Start date is //' || true)
-SCAN_DATE=$(date -d "$START_STR" +%F 2>/dev/null) || SCAN_DATE=$(date -d "@$MTIME" +%F)
+if [[ -n "$START_STR" ]]; then
+  SCAN_DATE=$(date -d "$START_STR" +%F 2>/dev/null) || SCAN_DATE=$(date -r "$LOG" +%F)
+else
+  SCAN_DATE=$(date -r "$LOG" +%F)
+fi
 
 if [[ "$WARNING_COUNT" -eq 0 ]]; then
   VALUE="${SCAN_DATE} · all clear"

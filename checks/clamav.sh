@@ -10,6 +10,7 @@
 # Always exits 0.
 
 set -euo pipefail
+source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 
 LOG="/var/log/clamav/weekly-scan.log"
 
@@ -18,13 +19,8 @@ if [[ ! -f "$LOG" ]]; then
   exit 0
 fi
 
-MTIME=$(stat -c %Y "$LOG")
-AGE_DAYS=$(( ($(date +%s) - MTIME) / 86400 ))
-if [[ $AGE_DAYS -gt 8 ]]; then
-  LAST_DATE=$(date -d "@$MTIME" +%Y-%m-%d)
-  printf "  %-9s  no recent scan (last: %s, %dd ago) ⚠\n" "ClamAV:" "$LAST_DATE" "$AGE_DAYS"
-  exit 0
-fi
+# ClamAV runs weekly, so allow 8 days before flagging staleness
+stale_guard "$LOG" 8 "ClamAV:" || exit 0
 
 SUMMARY=$(awk '
   /^=== ClamAV scan/ { buf=$0 "\n"; in_block=1; next }
