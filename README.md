@@ -4,8 +4,8 @@ Sends a daily Telegram message summarising the security posture, system health,
 and backup status of a Debian-based homelab server. Fires at noon via a systemd
 timer; no persistent process, no framework — just shell and curl.
 
-An optional LLM-generated "at a glance" summary is posted as a reply to the
-main message when a local Ollama endpoint is available — see [At a glance
+An "at a glance" summary is posted as a reply to the main message, surfacing
+every anomaly line as a bullet — see [At a glance
 summary](#at-a-glance-summary).
 
 ## What it reports
@@ -41,20 +41,20 @@ summary](#at-a-glance-summary).
   Recovery:  2026-04-02 04:35 · ✓ snapshot saved
 ```
 
-Followed, when the LLM endpoint is reachable, by a threaded reply:
+Followed by a threaded reply:
 
 ```
 🔎 At a glance
   ✅ All clear
 ```
 
-On an anomaly day (any check line ending with `⚠`), the same slot contains
-3–5 bullets instead:
+On an anomaly day (any check line ending with `⚠`), the same slot lists
+one bullet per flagged line instead:
 
 ```
 🔎 At a glance
-  • AIDE: 27595 added · 433 changed · 119 removed
-  • rkhunter: 8 warning(s)
+  • AIDE: 2026-04-02 01:52 · 27595 added · 433 changed · 119 removed
+  • rkhunter: 2026-04-02 · 8 warning(s)
 ```
 
 ## Requirements
@@ -66,10 +66,6 @@ On an anomaly day (any check line ending with `⚠`), the same slot contains
 
 Optional (checks are skipped if not installed):
 - `aide`, `clamav`, `rkhunter`, `fail2ban`, `smartmontools`, `docker`
-- `python3` + an Ollama endpoint serving an instruct model at
-  `http://localhost:11435/api/chat` for the LLM "at a glance" summary
-  (`python3` ships with Debian; see [At a glance summary](#at-a-glance-summary)
-  for details and how to disable)
 
 ## Setup
 
@@ -118,6 +114,7 @@ Description=Homelab Telegram daily report
 
 [Service]
 Type=oneshot
+TimeoutStartSec=10min
 ExecStart=/bin/bash /path/to/homelab_report/report.sh
 ```
 
@@ -168,31 +165,17 @@ After the main message is accepted, `report.sh` pipes the HTML-stripped
 message through `checks/at-a-glance.sh`, which posts a summary back to
 Telegram as a threaded reply.
 
-The logic is deliberately thin: the script looks for lines in the main report
-that end with the `⚠` character — those are the anomalies the individual
-check scripts have already flagged — and asks the LLM to turn them into
-short bullets. On a report with no `⚠` markers, the summary is literally
-`✅ All clear`. The LLM never decides what is or isn't an anomaly; the check
-scripts do. This keeps output grounded in the existing convention and
-minimises hallucination surface.
+The logic is deliberately thin: every check script already marks its own
+problem lines with a trailing `⚠`, so the summary just extracts those lines
+and reprints them as `• ` bullets (continuation lines are prefixed with
+their parent label, e.g. `• Docker: crashed: …`). On a report with no `⚠`
+markers, the summary is literally `✅ All clear`. Pure shell + awk — no
+extra dependencies, nothing to configure.
 
-**Dependencies:**
-
-- An Ollama-compatible endpoint at `http://localhost:11435/api/chat`
-  serving an instruct-capable model. The script is tagged for
-  `qwen3-coder:30b` in `MODEL=` near the top of `checks/at-a-glance.sh` —
-  swap it for any instruct model you prefer.
-- `python3` (stdlib `json` only; no `jq` or other package needed).
-
-**Failure behaviour:** if Ollama is unreachable, the model is missing, or
-the call exceeds the `MAX_TIME` cap (default 240s), the reply is a single
-line `⚠️ Summary unavailable (<reason>)`. The AIDE attachment and the main
-report are never blocked by a summary failure.
-
-**Performance note:** on CPU inference the 30B MoE takes ~2–3 minutes per
-call (prefill dominates). Use a smaller or GPU-backed model if you need
-faster turnaround; the prompt is generic enough to work with most
-instruct-tuned models.
+**Failure behaviour:** an empty input produces a single line
+`⚠️ Summary unavailable (empty input)` so a plumbing break stays visible.
+The AIDE attachment and the main report are never blocked by a summary
+failure.
 
 **Disabling:** delete `checks/at-a-glance.sh`. `report.sh` gracefully skips
 the summary when the script is missing.
