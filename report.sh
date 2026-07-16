@@ -142,14 +142,14 @@ send_aide_attachment() {
   rm -f "$tmpfile"
 }
 
-# ── LLM "at a glance" summary ─────────────────────────────────────────────────
+# ── "At a glance" summary ─────────────────────────────────────────────────────
 
-# Sends an LLM-generated anomaly summary as a reply to the main message.
-# Uses the always-on CPU Ollama endpoint at localhost:11435 (independent of
-# llm-mode). Summary script always exits 0 and returns either "✅ All clear",
-# 3–5 bullet anomalies, or "⚠️ Summary unavailable (<reason>)".
+# Sends an anomaly summary as a reply to the main message. The summary script
+# extracts every report line ending with the ⚠ marker (the checks have already
+# decided what is anomalous). It always exits 0 and returns either
+# "✅ All clear", one bullet per ⚠ line, or "⚠️ Summary unavailable (<reason>)".
 # Args: $1 — message_id to reply to
-#       $2 — HTML-stripped main message to feed the LLM
+#       $2 — HTML-stripped main message to summarise
 send_summary() {
   local reply_to_id="${1:-}"
   local plain_msg="${2:-}"
@@ -159,7 +159,7 @@ send_summary() {
   summary=$(printf '%s' "$plain_msg" | bash "${SCRIPT_DIR}/checks/at-a-glance.sh" 2>/dev/null) || return 0
   [[ -n "$summary" ]] || return 0
 
-  # Escape HTML so <pre> rendering is safe (the LLM could emit characters
+  # Escape HTML so <pre> rendering is safe (bullets echo report content that
   # Telegram's HTML parser would otherwise swallow).
   local escaped
   escaped=$(printf '%s' "$summary" | html_escape)
@@ -283,7 +283,7 @@ MSG_ID=$(echo "$RESPONSE_BODY" | grep -o '"message_id":[0-9]*' | grep -o '[0-9]*
 
 if [[ "$HTTP_STATUS" == "200" ]]; then
   # Strip HTML tags and decode the three entities run_check introduces, so the
-  # LLM sees the same text a human would see rendered in Telegram.
+  # summary sees the same text a human would see rendered in Telegram.
   MSG_PLAIN=$(echo "$MSG" | sed -e 's/<[^>]*>//g' -e 's/&lt;/</g' -e 's/&gt;/>/g' -e 's/&amp;/\&/g')
   send_summary "$MSG_ID" "$MSG_PLAIN"
   send_aide_attachment "$MSG_ID"
