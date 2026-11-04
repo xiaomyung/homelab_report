@@ -1,0 +1,85 @@
+#!/usr/bin/env bash
+# tg-alert — send a one-off Telegram alert using this repo's .env.
+#
+# The daily digest is report.sh; this is for event-driven alerts from other
+# host scripts (watchdogs, guards, hooks) so every Telegram message from the
+# server goes through one bot config in one place.
+#
+# Same layout as the daily report: the title renders at full size, the
+# optional body goes in a <pre> block (HTML-escaped) so label columns stay
+# aligned.
+#
+# Usage:
+#   sudo tools/tg-alert "⚠️ Title"                      # title only
+#   sudo tools/tg-alert "⚠️ Title" "  Label:    value"  # title + body
+#   printf '  Label:    value\n' | sudo tools/tg-alert "⚠️ Title"
+#
+# Callers should invoke it by its full path inside the repo (or via a symlink —
+# .env is located next to the real script, not the link).
+#
+# Retries for ~1 minute, so it also works from boot-time units that run
+# before the network or DNS is fully up.
+#
+# Exit codes: 0 sent · 1 usage/config error · 2 Telegram unreachable or rejected
+
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")" && pwd)"
+ENV_FILE="${SCRIPT_DIR}/../.env"
+
+usage() {
+  echo "usage: tg-alert TITLE [BODY]   (BODY may also come on stdin)" >&2
+  exit 1
+}
+
+# Escape the three HTML entities Telegram interprets in parse_mode=HTML.
+html_escape() {
+  sed 's/&/\&amp;/g; s/</\&lt;/g; s/>/\&gt;/g'
+}
+
+[[ $# -ge 1 && $# -le 2 ]] || usage
+TITLE="$1"
+if [[ $# -eq 2 ]]; then
+  BODY="$2"
+elif [[ ! -t 0 ]]; then
+  BODY="$(cat)"
+else
+  BODY=""
+fi
+[[ -n "${TITLE//[[:space:]]/}" ]] || usage
+
+if [[ ! -r "$ENV_FILE" ]]; then
+  echo "tg-alert: cannot read ${ENV_FILE} (missing, or not running as root)" >&2
+  exit 1
+fi
+# shellcheck source=/dev/null
+source "$ENV_FILE"
+if [[ -z "${TG_BOT_TOKEN:-}" || -z "${TG_CHAT_ID:-}" ]]; then
+  echo "tg-alert: TG_BOT_TOKEN / TG_CHAT_ID not set in ${ENV_FILE}" >&2
+  exit 1
+fi
+
+TEXT="$(printf '%s\n' "$TITLE" | html_escape)"
+if [[ -n "${BODY//[[:space:]]/}" ]]; then
+  TEXT+=$'\n'"<pre>$(printf '%s\n' "$BODY" | html_escape)</pre>"
+fi
+
+# Telegram rejects messages over 4096 chars — fall back to truncated plain
+# text rather than losing the alert (same approach as report.sh).
+if (( ${#TEXT} <= 4096 )); then
+  SEND_ARGS=(--data-urlencode "text=${TEXT}" --data-urlencode "parse_mode=HTML")
+else
+  PLAIN="${TITLE}"$'\n'"${BODY}"
+  SEND_ARGS=(--data-urlencode "text=${PLAIN:0:4000}
+… [truncated]")
+fi
+
+status=$(curl -s -o /dev/null -w "%{http_code}" \
+  --max-time 20 --retry 6 --retry-delay 10 --retry-all-errors \
+  --data-urlencode "chat_id=${TG_CHAT_ID}" "${SEND_ARGS[@]}" \
+  "https://api.telegram.org/bot${TG_BOT_TOKEN}/sendMessage") || status="curl-failed"
+
+if [[ "$status" != "200" ]]; then
+  echo "tg-alert: sendMessage failed (${status})" >&2
+  exit 2
+fi

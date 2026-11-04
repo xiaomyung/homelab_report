@@ -205,6 +205,46 @@ It copies the persistent `aide.log` (not `dailyaidecheck`'s ephemeral
 `$ARUNLOG` tempfile, which is unexported and already deleted by the time the
 hook runs) and prunes copies older than 30 days.
 
+## Event alerts
+
+`tools/tg-alert` sends a one-off message through the same bot and chat as
+the daily report, in the same layout: a title at full size and an optional
+body in a monospace block. Use it from any other host script that needs to
+raise an alert the moment something happens (a disk guard, a watchdog, a
+failed-unit hook), so all Telegram messaging lives in this repo and shares one
+`.env`.
+
+```bash
+sudo tools/tg-alert "⚠️ Backup disk missing — 11:32"
+sudo tools/tg-alert "⚠️ Backup disk missing — 11:32" "  Stopped:   plex kavita"
+printf '  Stopped:   plex kavita\n  Fix:       power on the disk\n' \
+  | sudo tools/tg-alert "⚠️ Backup disk missing — 11:32"
+```
+
+Renders as:
+
+```
+⚠️ Backup disk missing — 11:32
+  Stopped:   plex kavita
+  Fix:       power on the disk
+```
+
+Use the report's two-space indent and padded `Label:` column in the body so
+alerts read like report sections. The title and body are HTML-escaped.
+
+- Reads `.env` next to the repo (resolves symlinks, so linking the script into
+  `/usr/local/bin` works). Must run as root, since `.env` is `root:root 600`.
+- Retries for about a minute, so it is safe to call from boot-time systemd
+  units that start before the network or DNS is ready.
+- Exit codes: `0` sent, `1` usage/config error, `2` Telegram unreachable or
+  rejected the message. Callers should treat a failed alert as non-fatal.
+- Over Telegram's 4096-character limit it falls back to truncated plain text,
+  like `report.sh`.
+
+Call it by its full path from the caller, e.g.
+`/path/to/homelab_report/tools/tg-alert "$title" "$body"`, and keep the caller's own
+logic (what to check, when to alert) in the caller.
+
 ## Adding a new check
 
 1. Create `checks/newcheck.sh`:
@@ -231,6 +271,9 @@ sudo bash checks/aide.sh /var/log/aide/aide-2026-08-17.log
 
 # Check the last timer run
 journalctl -u tg-homelab-report.service -n 50
+
+# Send a test alert
+sudo tools/tg-alert "test"
 
 # Test Telegram connectivity
 source .env
